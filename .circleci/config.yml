@@ -1,49 +1,41 @@
-jobs:
-  terratest:
+version: '2.1'
+
+orgs:
+  terraform: circleci/terraform@1.2.0
+
+executors:
+  main:
+    working_directory: ~/project/
     docker:
-    - auth:
-        password: $DOCKER_PASSWORD
-        username: $DOCKER_USERNAME
-      environment:
-      - TEST_RESULTS: /tmp/test-results
-      image: trussworks/circleci:efb1042e31538677779971798e0912390f699e72
+      - image: cimg/base:2021.03
+
+jobs:
+  test:
+    executor: main
     steps:
-    - checkout
-    - restore_cache:
-        keys:
-        - pre-commit-dot-cache-{{ checksum ".pre-commit-config.yaml" }}
-        - go-mod-sources-v1-{{ checksum "go.sum" }}-{{ checksum "bin/check-go-version"
-          }}
-    - run:
-        command: |
-          echo 'export PATH=${PATH}:~/go/bin' >> $BASH_ENV
-          source $BASH_ENV
-        name: Adding go binaries to $PATH
-    - run: go get github.com/jstemmer/go-junit-report
-    - run:
-        command: |
-          temp_role=$(aws sts assume-role --role-arn arn:aws:iam::313564602749:role/circleci --role-session-name circleci)
-          export AWS_ACCESS_KEY_ID=$(echo $temp_role | jq .Credentials.AccessKeyId | xargs)
-          export AWS_SECRET_ACCESS_KEY=$(echo $temp_role | jq .Credentials.SecretAccessKey | xargs)
-          export AWS_SESSION_TOKEN=$(echo $temp_role | jq .Credentials.SessionToken | xargs)
-          make test
-        name: Assume role and run terratest
-    - save_cache:
-        key: pre-commit-dot-cache-{{ checksum ".pre-commit-config.yaml" }}
-        paths:
-        - ~/.cache
-    - save_cache:
-        key: go-mod-sources-v1-{{ checksum "go.sum" }}-{{ checksum "bin/check-go-version"
-          }}
-        paths:
-        - ~/go/pkg/mod
-    - store_test_results:
-        path: /tmp/test-results/gotest
-version: 2.1
+      - checkout
+      - terraform/install:
+        terraform_version: 0.13.5
+      - run:
+          name: "Download and install terraform-docs"
+          command: |
+            set -euo pipefail
+            cd ~
+            mkdir -p ~/bin
+            curl -sSLO https://github.com/segmentio/terraform-docs/releases/download/v${TERRAFORM_DOCS_VERSION}/terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-amd64
+            [ $(sha256sum terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-amd64 | cut -f1 -d' ') = ${TERRAFORM_DOCS_SHA256SUM} ]
+            chmod 755 terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-amd64
+            mv terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-amd64 ~/bin/terraform-docs
+          environment:
+            TERRAFORM_DOCS_VERSION: "0.11.2"
+            TERRAFORM_DOCS_SHA256SUM: "0d1e42d6fcb15b14027ae8efb794edb1cd7faa7a32507ccad449340529d04937"
+      - run: echo 'export PATH=~/bin:$PATH' >> $BASH_ENV
+      - run: scripts/update-docs
+      - run: scripts/format-files
+      - run: git diff --exit-code
+
 workflows:
-  validate:
+  version: 2
+  main:
     jobs:
-    - terratest:
-        context:
-        - org-global
-  version: 2.1
+      - test
